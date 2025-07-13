@@ -1,0 +1,35 @@
+my_crm_bot/
+├── .env                  # Файл для переменных окружения (токен бота, данные БД)
+├── main.py               # Точка входа в бота
+├── config.py             # Загрузка конфигурации из .env
+├── db/
+│   ├── __init__.py
+│   ├── models.py         # Определение моделей SQLAlchemy (если используете ORM)
+│   ├── setup.py          # Функции для подключения к БД, создания сессий
+└── handlers/             # Обработчики команд и сообщений
+│   ├── __init__.py
+│   ├── common.py         # Общие команды (/start, /help)
+│   ├── admin.py          # Обработчики для администратора
+│   ├── manager.py        # Обработчики для менеджеров
+│   ├── cashier.py        # Обработчики для кассиров
+│   └── inventory.py      # Обработчики для модуля склада
+├── states/               # Машины состояний (FSM)
+│   ├── __init__.py
+│   ├── inventory_states.py
+│   ├── order_states.py
+│   └── payment_states.py
+├── services/             # Бизнес-логика, взаимодействие с БД
+│   ├── __init__.py
+│   ├── user_service.py
+│   ├── inventory_service.py
+│   ├── order_service.py
+│   └── payment_service.py
+├── middlewares/          # Промежуточное ПО (для ролей, логирования)
+│   ├── __init__.py
+│   └── role_middleware.py
+└── utils/                # Вспомогательные функции (форматирование, валидация)
+    ├── __init__.py
+    ├── keyboards.py      # Клавиатуры для бота
+    └── filters.py        # Кастомные фильтры
+
+
