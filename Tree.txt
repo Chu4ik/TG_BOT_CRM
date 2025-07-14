@@ -33,3 +33,5 @@ my_crm_bot/
     └── filters.py        # Кастомные фильтры
 
 
+git remote add origin https://github.com/Chu4ik/TG_BOT_CRM.git
+

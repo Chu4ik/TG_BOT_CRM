@@ -9,7 +9,7 @@ from aiogram.types import BotCommand
 from config import settings
 from db.setup import engine # Correct for engine
 from db.models import Base  # CORRECT for Base (Base is defined in models.py)
-from handlers import common, admin, manager, cashier, inventory # Импортируем все хэндлеры
+from handlers import common, admin, manager, cashier, inventory_add
 from middlewares.role_middleware import RoleMiddleware
 
 # Функция для установки команд главного меню
@@ -52,7 +52,7 @@ async def main():
     dp.include_router(admin.router)
     dp.include_router(manager.router)
     dp.include_router(cashier.router)
-    dp.include_router(inventory.router)
+    dp.include_router(inventory_add.router)
 
     # Создание таблиц, если их нет (только для первого запуска или если вы меняете схемы)
     async with engine.begin() as conn:
