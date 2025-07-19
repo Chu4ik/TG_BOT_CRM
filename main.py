@@ -6,11 +6,25 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.strategy import FSMStrategy
 from aiogram.types import BotCommand
 
+
 from config import settings
 from db.setup import engine # Correct for engine
 from db.models import Base  # CORRECT for Base (Base is defined in models.py)
 from handlers import common, admin, manager, cashier, inventory_add
+from handlers.orders import add_client_order # Импортируем отдельные роутеры из handlers.orders
+from handlers.orders import add_addresses_order
+from handlers.orders import add_product_order
+from handlers.orders import add_datedeliveries_order
+from handlers.orders import edit_order
 from middlewares.role_middleware import RoleMiddleware
+
+logging.basicConfig(level=logging.DEBUG) # <--- ИЗМЕНЕНО: level=logging.DEBUG
+
+# Добавьте логирование для aiohttp.client и aiogram на уровень DEBUG
+logging.getLogger('aiohttp.client').setLevel(logging.DEBUG)
+logging.getLogger('aiogram').setLevel(logging.DEBUG)
+# SQLAlchemy можно оставить на INFO, если не нужно много SQL-логов
+logging.getLogger('sqlalchemy.engine').setLevel(logging.INFO)
 
 # Функция для установки команд главного меню
 async def set_main_menu_commands(bot: Bot):
@@ -53,6 +67,11 @@ async def main():
     dp.include_router(manager.router)
     dp.include_router(cashier.router)
     dp.include_router(inventory_add.router)
+    dp.include_router(add_client_order.router)
+    dp.include_router(add_addresses_order.router)
+    dp.include_router(add_product_order.router)
+    dp.include_router(add_datedeliveries_order.router)
+    dp.include_router(edit_order.router)
 
     # Создание таблиц, если их нет (только для первого запуска или если вы меняете схемы)
     async with engine.begin() as conn:

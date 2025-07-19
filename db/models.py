@@ -1,5 +1,7 @@
 # db/models.py
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Boolean, Index, BigInteger
+from sqlalchemy import String, Float, DateTime, ForeignKey, Boolean, Index, BigInteger
+from sqlalchemy import Column, Integer, ForeignKey, Computed
+from sqlalchemy import Numeric
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -137,11 +139,18 @@ class Order(Base):
 class OrderLine(Base):
     __tablename__ = 'order_lines'
     order_line_id = Column(Integer, primary_key=True)
-    order_id = Column(Integer, ForeignKey('orders.order_id'), index=True)
-    product_id = Column(Integer, ForeignKey('products.product_id'), index=True)
-    quantity = Column(Integer, nullable=False)
-    unit_price = Column(Float, nullable=False)
-    line_total = Column(Float, nullable=False)
+    order_id = Column(Integer, ForeignKey('orders.order_id'))
+    product_id = Column(Integer, ForeignKey('products.product_id'))
+    # ✅ ИСПРАВЛЕНИЕ: quantity - если в БД Integer, то здесь Integer
+    # Если в коде ожидается дробное, но в БД Integer, это может быть проблемой
+    quantity = Column(Integer, nullable=False) # Или Numeric/Float, если в БД тоже не Integer
+
+    # ✅ ИСПРАВЛЕНИЕ: unit_price - используем Numeric(precision, scale)
+    unit_price = Column(Numeric(10, 2), nullable=False) # Указываем точность и масштаб
+
+    # ✅ ИСПРАВЛЕНИЕ: line_total - используем Numeric(precision, scale) и Computed
+    # Выражение Computed должно точно соответствовать тому, что в вашей БД
+    line_total = Column(Numeric(12, 2), Computed("quantity * unit_price")) # Указываем точность и масштаб
 
     order = relationship("Order", back_populates="order_lines")
     product = relationship("Product", back_populates="order_lines")

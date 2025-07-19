@@ -1,0 +1,6 @@
+# handlers/orders/__init__.py
+
+from aiogram import Router
+
+order_router = Router()
+
