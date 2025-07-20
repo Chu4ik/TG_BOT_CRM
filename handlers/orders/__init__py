@@ -1,6 +1,18 @@
 # handlers/orders/__init__.py
+# handlers/orders/__init__.py
 
 from aiogram import Router
 
+from . import add_client_order
+from . import add_addresses_order
+from . import add_product_order
+from . import add_datedeliveries_order
+from . import edit_order # <--- ДОБАВЬТЕ ЭТОТ ИМПОРТ
+
 order_router = Router()
 
+order_router.include_router(add_client_order.router)
+order_router.include_router(add_addresses_order.router)
+order_router.include_router(add_product_order.router)
+order_router.include_router(add_datedeliveries_order.router)
+order_router.include_router(edit_order.router)

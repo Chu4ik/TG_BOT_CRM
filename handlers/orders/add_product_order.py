@@ -13,6 +13,8 @@ from sqlalchemy.future import select
 from sqlalchemy import exc as sa_exc, insert
 from utils.text_formatter import escape_markdown_v2, bold, italic
 import logging
+from decimal import Decimal
+from handlers.orders.edit_order import process_my_order_selection, return_to_order_menu
 
 router = Router()
 
@@ -38,7 +40,7 @@ async def send_product_options(update_obj: Message | CallbackQuery, state: FSMCo
 
         buttons = []
         for product in products:
-            button_text = escape_markdown_v2(f"{product.name} ({product.price} грн)")
+            button_text = f"{product.name} ({product.price} грн)"
             buttons.append([InlineKeyboardButton(text=button_text, callback_data=f"select_product_order_{product.product_id}")])
 
         buttons.append([InlineKeyboardButton(text="↩️ Назад к выбору адреса", callback_data="back_to_address_selection")])
@@ -48,18 +50,20 @@ async def send_product_options(update_obj: Message | CallbackQuery, state: FSMCo
 
         message_text = "Выберите товар для добавления в заказ:"
         if isinstance(update_obj, Message):
-            await update_obj.answer(message_text, reply_markup=keyboard, parse_mode="MarkdownV2")
+            await update_obj.answer(message_text, reply_markup=keyboard)
         else: # CallbackQuery
-            await update_obj.message.edit_text(message_text, reply_markup=keyboard, parse_mode="MarkdownV2")
+            await update_obj.message.edit_text(message_text, reply_markup=keyboard)
 
         await state.set_state(OrderCreationStates.waiting_for_product_selection)
 
+
 @router.callback_query(OrderCreationStates.waiting_for_product_selection, F.data.startswith("select_product_order_"))
-async def process_product_selection_order(callback: CallbackQuery, state: FSMContext):
+async def process_product_selection_order(callback: CallbackQuery, state: FSMContext, bot: Bot):
     """
     Обрабатывает выбор товара.
     Запрашивает количество товара для заказа.
     """
+    await bot(callback.answer())
     product_id = int(callback.data.split("_")[-1])
     async for session in get_db_session():
         product_stmt = select(Product).where(Product.product_id == product_id)
@@ -69,81 +73,144 @@ async def process_product_selection_order(callback: CallbackQuery, state: FSMCon
         if product:
             await state.update_data(current_order_product_id=product.product_id,
                                     current_order_product_name=product.name,
-                                    current_order_product_price=product.price) # Сохраняем цену продажи
-            await callback.message.edit_text(f"Вы выбрали товар: {bold(escape_markdown_v2(product.name))}\n"
+                                    current_order_product_price=product.price)
+            await bot(callback.message.edit_text(f"Вы выбрали товар: {bold(escape_markdown_v2(product.name))}\n"
                                              "Пожалуйста, введите количество товара для заказа:",
-                                             parse_mode="MarkdownV2")
+                                             parse_mode="MarkdownV2"))
             await state.set_state(OrderCreationStates.waiting_for_product_quantity)
         else:
-            await callback.answer("Ошибка: Товар не найден. Пожалуйста, попробуйте еще раз.", show_alert=True)
-            await send_product_options(callback, state, callback.bot) # Возвращаемся к выбору товара, передавая bot
-    await callback.answer()
+            await bot(callback.answer("Ошибка: Товар не найден. Пожалуйста, попробуйте еще раз.", show_alert=True))
+            await send_product_options(callback, state, bot)
 
-@router.message(OrderCreationStates.waiting_for_product_quantity, F.text)
-async def process_product_quantity_order(message: Message, state: FSMContext):
+
+@router.message(OrderCreationStates.waiting_for_product_quantity, F.text.regexp(r'^\d+$'))
+async def process_product_quantity_order(message: Message, state: FSMContext, bot: Bot):
     """
-    Обрабатывает ввод количества товара для заказа.
-    Добавляет позицию в заказ, автоматически устанавливает дату доставки
-    и предлагает добавить еще или перейти к подтверждению заказа.
+    Обрабатывает ввод нового количества товара.
+    Обновляет БД и возвращается в меню редактирования заказа.
     """
     try:
-        quantity = float(message.text.strip().replace(',', '.'))
-        if quantity <= 0:
-            await message.answer("Количество должно быть положительным числом. Пожалуйста, введите корректное количество.")
+        new_quantity = int(message.text)
+        if new_quantity <= 0:
+            await message.answer("Количество должно быть положительным целым числом. Пожалуйста, введите корректное количество.")
             return
     except ValueError:
-        await message.answer("Пожалуйста, введите корректное числовое значение для количества.")
+        await message.answer("Пожалуйста, введите корректное целое числовое значение для количества.")
         return
 
     data = await state.get_data()
-    product_id = data['current_order_product_id']
-    product_name = data['current_order_product_name']
-    unit_price = data['current_order_product_price'] # Используем цену продажи из Product
-    line_total = quantity * unit_price
+    order_line_id = data.get('editing_order_line_id')
+    order_id = data.get('editing_order_id') # ID заказа, если мы из режима редактирования
 
+    # Определяем, находимся ли мы в режиме "добавления товара к существующему заказу"
+    adding_to_existing_order = data.get('adding_to_existing_order', False)
+
+    current_product_id = data['current_order_product_id']
+    current_product_name = data['current_order_product_name']
+    unit_price = Decimal(str(data['current_order_product_price']))
+    line_total = Decimal(str(new_quantity)) * unit_price
+
+    # Загружаем текущий список order_items из состояния, если он есть
     order_items = data.get('order_items', [])
+
     order_items.append({
-        'product_id': product_id,
-        'product_name': product_name,
-        'quantity': quantity,
+        'product_id': current_product_id,
+        'product_name': current_product_name,
+        'quantity': new_quantity,
         'unit_price': unit_price,
         'line_total': line_total
     })
-    
-    # ✅ НОВАЯ ЛОГИКА: Автоматическая установка даты доставки на завтра
-    delivery_date = datetime.date.today() + datetime.timedelta(days=1)
-    await state.update_data(order_items=order_items, delivery_date=delivery_date)
+    await state.update_data(order_items=order_items)
 
+    delivery_date = data.get('delivery_date')
+    if not delivery_date and not adding_to_existing_order:
+        delivery_date = datetime.date.today() + datetime.timedelta(days=1)
+        await state.update_data(delivery_date=delivery_date)
+    
+    current_total_sum = sum((item['line_total'] for item in order_items), start=Decimal('0'))
+
+    if adding_to_existing_order:
+        async for session in get_db_session():
+            try:
+                order_stmt = select(Order).where(Order.order_id == order_id)
+                order_result = await session.execute(order_stmt)
+                order = order_result.scalar_one_or_none()
+
+                if not order:
+                    await message.answer("Ошибка: Основной заказ не найден для добавления товара. Пожалуйста, начните /my_orders снова.")
+                    await state.clear()
+                    logging.error(f"process_product_quantity_order: Order {order_id} не найден при добавлении товара.")
+                    return
+
+                insert_stmt_order_line = insert(OrderLine).values(
+                    order_id=order_id,
+                    product_id=current_product_id,
+                    quantity=new_quantity,
+                    unit_price=unit_price,
+                )
+                await session.execute(insert_stmt_order_line)
+                logging.info(f"Новая OrderLine для product_id {current_product_id} добавлена в заказ {order_id}.")
+
+                order.total_amount += line_total
+                logging.info(f"Общая сумма заказа {order_id} увеличена на {line_total}.")
+
+                await session.commit()
+                logging.info("Транзакция успешно закоммичена: новый товар добавлен в заказ и сумма обновлена.")
+
+                await message.answer(
+                    f"✅ Товар '{escape_markdown_v2(current_product_name)}' ({new_quantity} шт.) добавлен в заказ №{order_id}.\n"
+                    f"Текущая сумма заказа: {escape_markdown_v2(str(round(order.total_amount, 2)))} грн."
+                )
+                
+                await state.update_data(adding_to_existing_order=False)
+                temp_callback = CallbackQuery(
+                    id=f"temp_{datetime.datetime.now().timestamp()}",
+                    from_user=message.from_user,
+                    # ✅ ИСПРАВЛЕНИЕ: Используем message.chat.id вместо message.chat_instance
+                    chat_instance=str(message.chat.id), # <--- ИСПРАВЛЕНО ЗДЕСЬ
+                    message=message,
+                    data=f"edit_order_select_{order_id}"
+                )
+                await process_my_order_selection(temp_callback, state, bot)
+                logging.info("Возвращение в меню редактирования после добавления товара.")
+                return
+
+            except Exception as e:
+                await session.rollback()
+                await message.answer(f"❌ Произошла ошибка при добавлении товара в заказ: {str(e)}\n")
+                logging.error(f"process_product_quantity_order: Ошибка при добавлении товара в заказ {order_id}: {e}", exc_info=True)
+                await state.clear()
+                return
 
     summary_text = f"{bold('Текущая позиция добавлена в заказ:')}\n" \
-               f"  Товар: {bold(escape_markdown_v2(product_name))}\n" \
-               f"  Количество: {bold(str(quantity))} шт\\.\n" \
-               f"  Цена/ед: {bold(str(unit_price))} грн\n" \
-               f"  Сумма по позиции: {bold(str(round(line_total, 2)))} грн\n\n" \
-               f"{bold('Автоматическая дата доставки:')} {bold(delivery_date.strftime('%d.%m.%Y'))}\n\n" \
-               f"{bold('Всего позиций в заказе:')} {bold(str(len(order_items)))}\n" \
-               f"{bold('Общая сумма заказа:')} {bold(str(round(sum(item['line_total'] for item in order_items), 2)))} грн\n\n" \
-               "Что дальше?"
+                   f"  Товар: {bold(escape_markdown_v2(current_product_name))}\n" \
+                   f"  Количество: {bold(str(new_quantity))} шт\\.\n" \
+                   f"  Цена/ед: {bold(str(unit_price))} грн\n" \
+                   f"  Сумма по позиции: {bold(str(round(line_total, 2)))} грн\n\n" \
+                   f"{bold('Автоматическая дата доставки:')} {bold(delivery_date.strftime('%d.%m.%Y'))}\n\n" \
+                   f"{bold('Всего позиций в заказе:')} {bold(str(len(order_items)))}\n" \
+                   f"{bold('Общая сумма заказа:')} {bold(str(round(current_total_sum, 2)))} грн\n\n" \
+                   "Что дальше?"
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="➕ Добавить еще товар", callback_data="add_another_order_product")],
-        [InlineKeyboardButton(text="✅ Завершить формирование заказа", callback_data="complete_order_creation")], # Изменено callback_data
-        # Кнопка для выбора даты удалена, т.к. она теперь автоматическая
-        # [InlineKeyboardButton(text="✏️ Редактировать заказ", callback_data="edit_order_items")] # Пока не реализуем
+        [InlineKeyboardButton(text="✅ Завершить формирование заказа", callback_data="complete_order_creation")],
         [InlineKeyboardButton(text="❌ Отменить", callback_data="cancel_order_creation")]
     ])
 
     await message.answer(summary_text, reply_markup=keyboard, parse_mode="MarkdownV2")
     await state.set_state(OrderCreationStates.confirming_order_item)
 
+
+# ✅ НОВЫЙ ХЭНДЛЕР: Добавить еще товар (для решения Проблемы 1)
 @router.callback_query(OrderCreationStates.confirming_order_item, F.data == "add_another_order_product")
-async def add_another_order_product(callback: CallbackQuery, state: FSMContext):
+async def add_another_order_product_handler(callback: CallbackQuery, state: FSMContext, bot: Bot):
     """
-    Пользователь решил добавить еще один товар в текущий заказ.
-    Возвращаемся к выбору товара.
+    Обрабатывает нажатие кнопки "Добавить еще товар" и возвращает к выбору товара.
     """
-    await send_product_options(callback, state, callback.bot) # Используем общую функцию, передаем bot
-    await callback.answer()
+    await bot(callback.answer())
+    # Возвращаемся к выбору товара
+    await send_product_options(callback, state, bot)
 
 # ✅ НОВЫЙ ХЭНДЛЕР: Завершение формирования заказа
 @router.callback_query(OrderCreationStates.confirming_order_item, F.data == "complete_order_creation")

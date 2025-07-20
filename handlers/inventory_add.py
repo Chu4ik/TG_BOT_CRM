@@ -411,16 +411,12 @@ async def confirm_save_receipt(callback: CallbackQuery, state: FSMContext):
 
                 if stock_entry:
                     stock_entry.quantity += quantity
-                    # Убедитесь, что last_cost есть в модели Stock
-                    # Если last_cost не существует в вашей модели Stock, удалите следующую строку:
-                    # stock_entry.last_cost = unit_cost
+
                 else:
                     new_stock_entry = Stock(
                         product_id=product_id,
                         quantity=quantity,
-                        # Убедитесь, что last_cost есть в модели Stock
-                        # Если last_cost не существует в вашей модели Stock, удалите следующую строку:
-                        # last_cost=unit_cost
+
                     )
                     session.add(new_stock_entry)
 

@@ -73,6 +73,7 @@ async def main():
     dp.include_router(add_datedeliveries_order.router)
     dp.include_router(edit_order.router)
 
+
     # Создание таблиц, если их нет (только для первого запуска или если вы меняете схемы)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
